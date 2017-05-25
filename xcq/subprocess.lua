@@ -95,6 +95,7 @@ local function spawn(desc)
     _stdout = check_file(desc.stdout),
     _stderr = check_file(desc.stderr),
     _status = promise.new(),
+    _cwd = desc.cwd,
   }, subprocess_mt)
 
   if desc.autostart ~= false then
@@ -177,6 +178,12 @@ function subprocess_mt:start()
       prepare_fd_child(stdinr,  0)
       prepare_fd_child(stdoutw, 1)
       prepare_fd_child(stderrw, 2)
+
+      -- change dir
+      if self._cwd then
+        local ok, msg, code = unistd.chdir(self._cwd)
+        if not ok then return msg, code end
+      end
 
       local ok, msg, code = posix.execp(self.executable, self.command)
       return msg, code

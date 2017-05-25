@@ -4,8 +4,10 @@ local cq = require 'telescope.cqueues'
 local signal = require 'cqueues.signal'
 local socket = require 'cqueues.socket'
 local errno = require 'cqueues.errno'
+local posix = require 'posix'
 local unistd = require 'posix.unistd'
 local fcntl = require 'posix.fcntl'
+local stdlib = require 'posix.stdlib'
 local subprocess= require 'xcq.subprocess'
 
 describe('subprocess runner', function()
@@ -235,6 +237,32 @@ describe('subprocess runner', function()
     assert_nil(ok)
     assert_type(err, 'string')
     assert_equal(code, errno.EACCES)
+  end)
+
+  cq.test('do not change dir by default', function()
+    local parentdir = unistd.getcwd()
+    local p = subprocess.spawn{ 'pwd', stdout=subprocess.PIPE }
+    assert_equal(parentdir .. '\n', p.stdout:read('*a'))
+    assert_equal(0, (p:wait()))
+  end)
+
+  cq.test('change directory (dir exists)', function()
+    local parentdir = unistd.getcwd()
+    local tmp = stdlib.mkdtemp('/tmp/test-xcq-XXXXXX') -- TODO: use $TMPDIR if available
+
+    local p = subprocess.spawn{ 'pwd', stdout=subprocess.PIPE, cwd=tmp }
+    assert_equal(tmp .. '\n', p.stdout:read('*a'))
+    assert_equal(0, (p:wait()))
+
+    -- check that the parent is still at the same place
+    assert_equal(parentdir, unistd.getcwd())
+  end)
+
+  cq.test('change directory (dir not exists)', function()
+    local parentdir = unistd.getcwd()
+    local ok, msg, code = subprocess.spawn{ 'pwd', stdout=subprocess.PIPE, cwd='/foo/bar' }
+    assert_nil(ok)
+    assert_equal(errno.ENOENT, code)
   end)
 end)
 
