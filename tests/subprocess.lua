@@ -264,5 +264,25 @@ describe('subprocess runner', function()
     assert_nil(ok)
     assert_equal(errno.ENOENT, code)
   end)
+
+  local function process_env(out)
+    local t, n = {}, 0
+    for l in out:lines() do
+      local k,v = l:match('^(.-)=(.+)$')
+      if not k then error(string.format('failed to parse: %q', l)) end
+      t[k] = v
+      n = n + 1
+    end
+    return t, n
+  end
+
+  cq.test('environment variables', function()
+    local p = subprocess.spawn{ 'env', env={ FOO='bar' }, stdout=subprocess.PIPE }
+    local env, nenv = process_env(p.stdout)
+    assert_equal(0, (p:wait()))
+    assert_equal('bar', env.FOO)
+    assert_greater_than(nenv, 1) -- the existing environment is still there
+    assert_equal(os.getenv('PATH'), env.PATH)
+  end)
 end)
 

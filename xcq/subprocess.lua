@@ -2,6 +2,7 @@ local posix = require 'posix'
 local unistd = require 'posix.unistd'
 local syswait = require "posix.sys.wait"
 local fcntl = require 'posix.fcntl'
+local stdlib = require 'posix.stdlib'
 
 local cqueues = require 'cqueues'
 local signal = require 'cqueues.signal'
@@ -96,6 +97,7 @@ local function spawn(desc)
     _stderr = check_file(desc.stderr),
     _status = promise.new(),
     _cwd = desc.cwd,
+    _env = desc.env,
   }, subprocess_mt)
 
   if desc.autostart ~= false then
@@ -183,6 +185,13 @@ function subprocess_mt:start()
       if self._cwd then
         local ok, msg, code = unistd.chdir(self._cwd)
         if not ok then return msg, code end
+      end
+
+      -- setup environment
+      if self._env then
+        for k, v in pairs(self._env) do
+          stdlib.setenv(k, v, true)
+        end
       end
 
       local ok, msg, code = posix.execp(self.executable, self.command)
