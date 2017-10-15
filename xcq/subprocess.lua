@@ -1,5 +1,6 @@
 local posix = require 'posix'
 local unistd = require 'posix.unistd'
+local pwd = require 'posix.pwd'
 local syswait = require "posix.sys.wait"
 local fcntl = require 'posix.fcntl'
 local stdlib = require 'posix.stdlib'
@@ -79,6 +80,33 @@ local function check_file(f)
   error('file must be either nil, number, cqueues socket or Lua file handle')
 end
 
+-- Gather data about user to change to.
+-- Returns either `nil` if no change is required, or `user_id` and `group_id`.
+--
+-- XXX: this is currently a WIP feature, security and correctness is not yet
+-- battle tested. Supplementary groups, environment and working directory are
+-- all left unaffected for now.
+local function check_user(user)
+  if not user then return nil, nil end
+  if unistd.getuid() ~= 0 then error('you need to be root to change user') end
+
+  local group
+  if type(user) == 'string' then
+    -- this is a user name, find out its user id
+    local passwd = pwd.getpwnam(user)
+    if not passwd then error('unknown user: ' .. user) end
+    user = passwd.pw_uid
+    group = passwd.pw_gid
+  else
+    assert(type(user) == 'number', 'wrong user type')
+    local passwd = pwd.getpwuid(user)
+    if not passwd then error('unknown user id: ' .. tostring(user)) end
+    group = passwd.pw_gid
+  end
+
+  return user, group
+end
+
 local function spawn(desc)
   assert(type(desc) == 'table', 'expected a table')
   assert(#desc > 0, 'no command provided')
@@ -89,6 +117,8 @@ local function spawn(desc)
     command[i] = tostring(desc[i])
   end
 
+  local user, group = check_user(desc.user)
+
   local self = setmetatable({
     command = command,
     executable = desc.executable or table.remove(command, 1),
@@ -98,6 +128,8 @@ local function spawn(desc)
     _status = promise.new(),
     _cwd = desc.cwd,
     _env = desc.env,
+    _user = user,
+    _group = group,
   }, subprocess_mt)
 
   if desc.autostart ~= false then
@@ -135,6 +167,7 @@ local function prepare_fd_child(fd, dest)
   local flags = assert(fcntl.fcntl(dest, fcntl.F_GETFL))
   assert(fcntl.fcntl(dest, fcntl.F_SETFL, clearbit(flags, fcntl.O_NONBLOCK)))
 end
+
 
 --- Start the process.
 -- The process id will be returned and stored in  the `pid` attribute.
@@ -180,6 +213,12 @@ function subprocess_mt:start()
       prepare_fd_child(stdinr,  0)
       prepare_fd_child(stdoutw, 1)
       prepare_fd_child(stderrw, 2)
+
+      -- drop privileges
+      if self._user then
+        assert(unistd.setpid('g', self._group))
+        assert(unistd.setpid('u', self._user))
+      end
 
       -- change dir
       if self._cwd then

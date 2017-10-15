@@ -268,7 +268,7 @@ describe('subprocess runner', function()
   local function process_env(out)
     local t, n = {}, 0
     for l in out:lines() do
-      local k,v = l:match('^(.-)=(.+)$')
+      local k,v = l:match('^(.-)=(.*)$')
       if not k then error(string.format('failed to parse: %q', l)) end
       t[k] = v
       n = n + 1
@@ -283,6 +283,13 @@ describe('subprocess runner', function()
     assert_equal('bar', env.FOO)
     assert_greater_than(nenv, 1) -- the existing environment is still there
     assert_equal(os.getenv('PATH'), env.PATH)
+  end)
+
+  -- at least check that the call fails correctly
+  cq.test('drop privileges (not root)', function()
+    local ok, msg = pcall(subprocess.spawn, { 'id', user='julien' })
+    assert_equal(false, ok)
+    assert_match('you need to be root to change user$', msg)
   end)
 end)
 
