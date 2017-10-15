@@ -45,10 +45,12 @@ local function handle_signals()
       listener:wait()
       -- maybe more than one child died
       repeat
-        local pid, what, status = syswait.wait(-1, syswait.WNOHANG)
-        -- not intersedted in the 'stopped' state
-        if pending[pid] and (what == 'exited' or what == 'killed') then
-          pending[pid]:set(true, status, what)
+        local pid, what, code = syswait.wait(-1, syswait.WNOHANG)
+        -- not interested in the 'stopped' state
+        local p = pending[pid]
+        if p and (what == 'exited' or what == 'killed') then
+          p._code, p._what = code, what
+          p._status:set(true, code, what)
           pending[pid] = nil
         end
       -- nil is when the process don't have children anymore, 0 is when the
@@ -248,7 +250,7 @@ function subprocess_mt:start()
     child:close()
 
     self.pid = pid
-    pending[pid] = self._status
+    pending[pid] = self
 
     if install_handler then
       handle_signals()
@@ -271,6 +273,12 @@ function subprocess_mt:start()
     end
   end
   return pid
+end
+
+--- Return a pollable object that polls ready when the process exits.
+-- Makes process objects compliant with the cqueues polling protocol.
+function subprocess_mt:pollfd()
+  return self._status:pollfd()
 end
 
 --- Wait for the process to finish.

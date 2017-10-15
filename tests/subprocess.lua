@@ -56,6 +56,16 @@ describe('subprocess runner', function()
     assert_equal('exited', status)
   end)
 
+  cq.test('a process is a pollable object', function()
+    local p = subprocess.spawn{ 'sleep', '0.5' }
+    assert_equal(p, cqueues.poll(p, 1), ':poll() returns the process instance')
+    -- check that the process is actually finished (no :wait() call)
+    assert_equal(0, p._code)
+    assert_equal('exited', p._what)
+    -- wait anyway, it should return instantly
+    assert_equal(0, p:wait(0))
+  end)
+
   cq.test('stdin/stdout pipe', function()
     local p = subprocess.spawn{ 'cat', stdin=subprocess.PIPE, stdout=subprocess.PIPE }
     p.stdin:write('hello, world\n')
