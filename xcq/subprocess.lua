@@ -1,3 +1,8 @@
+--- Subprocess management for cqueues.
+-- @module xcq.subprocess
+-- @author Julien Desgats <julien@desgats.fr>
+-- @license MIT
+
 local posix = require 'posix'
 local unistd = require 'posix.unistd'
 local pwd = require 'posix.pwd'
@@ -13,6 +18,7 @@ local errno = require 'cqueues.errno'
 
 local pending = setmetatable({}, { __mode = 'v' })
 
+-- luacheck: push ignore bit
 local clearbit
 if bit then       -- LuaJIT
   clearbit = function(a,b) return bit.band(a, bit.bnot(b)) end
@@ -24,8 +30,13 @@ else              -- hope for 5.3+
     'Lua version unsupported'
   )()
 end
+-- luacheck: pop
 
+--- Opaque type used to create pipes between the current process and the
+-- subprocesses.
+-- @table PIPE
 local PIPE = {}
+
 local subprocess_mt = {}
 subprocess_mt.__index = subprocess_mt
 
@@ -109,6 +120,69 @@ local function check_user(user)
   return user, group
 end
 
+--- Contains all the data about the process to start.
+-- A `process_desc` table has two parts:
+--
+-- * The array part must contain the command to run, in particular `desc[1]` is
+--   the executable name and `desc[2], ...` are the arguments for the process.
+-- * The hash part contains other informations about how to start the process.
+--   The different fields are detailed below.
+--
+-- Whenever a field is a `filedesc`, it can be any of:
+--
+-- * `nil`: the corresponding file descriptor is not changed, so the one from
+--   the parent process will be inherited
+-- * `number`: a raw file descriptor number
+-- * `file`: a regular Lua file object (like the ones from `io.open`)
+-- * `cqueues.socket`: a cqueues socket object
+-- * `PIPE`: tells the process launcher to create a pipe to communicate directly
+--   with the created process
+--
+--
+-- @tfield  filedesc  stdin   Standard input file (must be readable)
+-- @tfield  filedesc  stdout  Standard output file (must be writeable)
+-- @tfield  filedesc  stderr  Standard error file (must be writeable)
+-- @tfield[opt=true]  bool  autostart
+--   If `false`, the process is not automatically started. The default behavior
+--   is to start the process in the `spawn` function.
+-- @tfield[opt]  string  executable
+--   The actual process to run: if provided, that executable will be run
+--   instead of `desc[1]`. Note that `desc[1]` is still used as program name
+--   (i.e. the value in `argv[0]`)
+-- @tfield[opt]  string  pwd
+--   Will cause the current directory to be changed to this one prior executing
+--   the process.
+-- @tfield[opt]  table  env
+--   Environment variables to set prior to run the process. Note that the
+--   existing environment is preserved (data in `env` have precedence over it
+--   though).
+-- @tfield[opt]  string|number  user
+--   Change user of the spawned process. This feature can be used only if the
+--   current user is `root`. If a number is provided, it must be a valid user
+--   id, if a string is provided, it must be a valid user name. The group is
+--   also changed to the primary user's group.
+--   **Warning**: this feature is not complete and is might contain security
+--   issues.
+-- @table process_desc
+
+
+--- Builds a new process instance.
+-- The whole process data is passed in the `desc` argument. The command to run
+-- must be located in the array part. The first element is the process name,
+-- and is also used to find the actual executable (unless the `executable`
+-- parameter is provided.
+--
+-- The hash part of `desc` contains the other parameters of the process (see
+-- `process_desc` for details).
+--
+-- Unless `autostart=false` is passed in the descriptor, the process is stated
+-- automatically.
+-- @tparam  process_desc  desc  Process data
+-- @return[1] `process` instance
+-- @return[2] nil
+-- @return[2] error message
+-- @return[2] error code
+-- @function start
 local function spawn(desc)
   assert(type(desc) == 'table', 'expected a table')
   assert(#desc > 0, 'no command provided')
@@ -170,11 +244,32 @@ local function prepare_fd_child(fd, dest)
   assert(fcntl.fcntl(dest, fcntl.F_SETFL, clearbit(flags, fcntl.O_NONBLOCK)))
 end
 
+--- Process object allows to interact with a created process.
+--
+-- In addition to the described methods, `process` instances have the `command`
+-- and `executable` fields corresponding to the ones provided in the
+-- constructor.
+--
+-- Once the process is started (immediately, unless `autostart` has been
+-- disabled), its process identifier is stored in the `pid` attribute.
+--
+-- If some file descriptors were set to `PIPE`, they they also exposed
+-- `cqueues.socket` objects in the `stdin`, `stdout` and `stderr`
+-- attributes.
+--
+-- @type process
 
 --- Start the process.
--- The process id will be returned and stored in  the `pid` attribute.
--- If standard files are piped, they become available under the `stdin`,
--- `stdout` and `stderr` attributes.
+-- This method will block until the process has been effectively started (i.e.
+-- the `exec` syscall has succeeded).
+--
+-- **Note:** You don't need to call this method unless `autostart` has been
+-- disabled.
+--
+-- @return[1] `pid` of the created process on success
+-- @return[2] `nil`
+-- @return[2] Error message
+-- @return[2] Numerical error code
 function subprocess_mt:start()
   if self.pid then return nil, 'already started' end
 
@@ -204,7 +299,8 @@ function subprocess_mt:start()
       -- WARNING: starting from here, the current corroutine must not yield
       parent:close()
       -- use raw read to not return to the cqueues controller
-      local ok, msg, code = unistd.read(child:pollfd(), 1)
+      local ok, msg, code
+      ok, msg = unistd.read(child:pollfd(), 1)
       assert(ok == '1', msg or 'wrong sync from parent')
 
       -- setup I/O
@@ -224,7 +320,7 @@ function subprocess_mt:start()
 
       -- change dir
       if self._cwd then
-        local ok, msg, code = unistd.chdir(self._cwd)
+        ok, msg, code = unistd.chdir(self._cwd)
         if not ok then return msg, code end
       end
 
@@ -235,7 +331,7 @@ function subprocess_mt:start()
         end
       end
 
-      local command, executable = {}, nil
+      local command, executable = {}
       if self.executable then
         executable = self.executable
         for i, arg in ipairs(self.command) do command[i-1] = arg end
@@ -244,7 +340,7 @@ function subprocess_mt:start()
         for i=2, #self.command do command[i-1] = self.command[i] end
       end
 
-      local ok, msg, code = posix.execp(executable, command)
+      ok, msg, code = posix.execp(executable, command) -- luacheck: ignore ok
       return msg, code
     end, debug.traceback)
 
@@ -271,11 +367,11 @@ function subprocess_mt:start()
 
     -- all clear the child is free to go
     parent:write('1')
-    local status, err = parent:read('*a')
+    local status, err = parent:read('*a') -- luacheck: ignore err
     if status then
       -- the child wrote something on the sync socket: an error occured
-      local errno, msg = status:match('(%-?%d+)\n(.*)')
-      return nil, msg, tonumber(errno)
+      local errcode, msg = status:match('(%-?%d+)\n(.*)')
+      return nil, msg, tonumber(errcode)
     elseif err then
       -- the socket itself had an error
       return nil, 'sync with child failed: ' .. errno.strerror(err), err
@@ -286,6 +382,7 @@ end
 
 --- Return a pollable object that polls ready when the process exits.
 -- Makes process objects compliant with the cqueues polling protocol.
+-- @return Pollable object
 function subprocess_mt:pollfd()
   return self._status:pollfd()
 end
@@ -293,17 +390,26 @@ end
 --- Wait for the process to finish.
 -- @return[1] Exit code of the process
 -- @return[1] Exist status (`exited` or `killed`)
--- @return[2] If timeout is reached
+-- @return[2] `nil` if timeout is reached
 function subprocess_mt:wait(timeout)
   return self._status:get(timeout)
 end
 
 --- Send a signal do the process.
--- @param signal numerical code of the signal to send
--- @see Mappings can be found in `posix.signal` or `cqueues.signal`
-function subprocess_mt:kill(signal)
+-- You can use the constants defined in the `cqueues.signal` module.
+--
+-- @param signum numerical code of the signal to send
+-- @return[1] `true` on success
+-- @return[2] `nil`
+-- @return[2] Error message
+function subprocess_mt:kill(signum)
   if not self.pid then return nil, 'not started' end
-  posix.kill(self.pid, signal)
+  if self._code then return nil, 'already dead' end
+
+  -- the raw return values are not really Lua-ish
+  local ok, msg = posix.kill(self.pid, signum)
+  if ok then return true end
+  return nil, msg
 end
 
 return {
