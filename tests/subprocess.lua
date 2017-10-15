@@ -301,5 +301,15 @@ describe('subprocess runner', function()
     assert_equal(false, ok)
     assert_match('you need to be root to change user$', msg)
   end)
+
+  cq.test('change executable name', function()
+    local p = assert(subprocess.spawn { 'foobar', '-c', 'echo $0',
+      executable='/bin/sh',
+      stdout=subprocess.PIPE,
+    })
+
+    assert_equal('foobar\n', p.stdout:read('*a'))
+    assert_equal(0, p:wait())
+  end)
 end)
 

@@ -113,8 +113,8 @@ local function spawn(desc)
   assert(type(desc) == 'table', 'expected a table')
   assert(#desc > 0, 'no command provided')
 
-  -- copy the command
-  local command = {}
+  -- copy the command (don't keep a reference to the desc table)
+  local command = { }
   for i=1, #desc do
     command[i] = tostring(desc[i])
   end
@@ -123,7 +123,7 @@ local function spawn(desc)
 
   local self = setmetatable({
     command = command,
-    executable = desc.executable or table.remove(command, 1),
+    executable = desc.executable,
     _stdin = check_file(desc.stdin),
     _stdout = check_file(desc.stdout),
     _stderr = check_file(desc.stderr),
@@ -235,7 +235,16 @@ function subprocess_mt:start()
         end
       end
 
-      local ok, msg, code = posix.execp(self.executable, self.command)
+      local command, executable = {}, nil
+      if self.executable then
+        executable = self.executable
+        for i, arg in ipairs(self.command) do command[i-1] = arg end
+      else
+        executable = self.command[1]
+        for i=2, #self.command do command[i-1] = self.command[i] end
+      end
+
+      local ok, msg, code = posix.execp(executable, command)
       return msg, code
     end, debug.traceback)
 
