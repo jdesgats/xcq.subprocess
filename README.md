@@ -29,11 +29,24 @@ Alpha: might contain bugs, API not frozen, some features are unfinished:
 * `luaposix` is big, investigate on `lunix` for a possible replacement
 * Use `posix_spawn` instead of `fork`/`exec`?
 
-Dependencies
+Installation
 ------------
+
+### Dependencies
 
 * [cqueues][cq]
 * [luaposix][luaposix] for low level system calls
+
+### LuaRocks (no stable release yet)
+
+```sh
+luarocks install https://github.com/jdesgats/xcq.subprocess/raw/master/xcq-subprocess-scm-1.rockspec
+```
+
+### Manually
+
+Either put the `xcq` project somewhere in your Lua path after installing the
+above dependencies.
 
 API
 ---
