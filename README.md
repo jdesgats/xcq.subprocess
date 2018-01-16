@@ -40,7 +40,7 @@ Installation
 ### LuaRocks (no stable release yet)
 
 ```sh
-luarocks install https://github.com/jdesgats/xcq.subprocess/raw/master/xcq-subprocess-scm-1.rockspec
+luarocks install https://github.com/jdesgats/xcq.subprocess/raw/master/rockspecs/xcq-subprocess-scm-1.rockspec
 ```
 
 ### Manually
